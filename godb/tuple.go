@@ -5,13 +5,18 @@ package godb
 
 import (
 	"bytes"
+	"encoding/binary"
 	"fmt"
 	"strconv"
 	"strings"
+	"unsafe"
 )
 
 // DBType is the type of a tuple field, in GoDB, e.g., IntType or StringType
 type DBType int
+
+var temp_int int64 = 0
+var temp_char byte = 'a'
 
 const (
 	IntType     DBType = iota
@@ -47,12 +52,32 @@ type TupleDesc struct {
 // all of their field objects are equal and they
 // are the same length
 func (d1 *TupleDesc) equals(d2 *TupleDesc) bool {
-	// TODO: some code goes here
-	return true
-
+	if len(d1.Fields) != len(d2.Fields) {
+		return false
+	} else {
+		// If statement above prevents errors for uneven field lengths
+		for i, f := range d1.Fields {
+			if f != d2.Fields[i] {
+				return false
+			}
+		}
+		return true
+	}
 }
 
 // Hint: heap_page need function there:  (desc *TupleDesc) bytesPerTuple() int
+// Calculates the size of the tuple
+func (desc *TupleDesc) bytesPerTuple() int {
+	size := 0
+	for i := 0; i < len(desc.Fields); i++ {
+		if desc.Fields[i].Ftype == IntType {
+			size += (int)(unsafe.Sizeof(temp_int))
+		} else if desc.Fields[i].Ftype == StringType {
+			size += ((int)(unsafe.Sizeof(temp_char))) * StringLength
+		} // No else, maybe we want to throw error here
+	}
+	return size
+}
 
 // Given a FieldType f and a TupleDesc desc, find the best
 // matching field in desc for f.  A match is defined as
@@ -84,8 +109,9 @@ func findFieldInTd(field FieldType, desc *TupleDesc) (int, error) {
 // another slice object does not make a copy of the contents of the slice.
 // Look at the built-in function "copy".
 func (td *TupleDesc) copy() *TupleDesc {
-	// TODO: some code goes here
-	return &TupleDesc{} //replace me
+	fields := make([]FieldType, len(td.Fields))
+	copy(fields, td.Fields)
+	return &TupleDesc{fields}
 }
 
 // Assign the TableQualifier of every field in the TupleDesc to be the
@@ -104,8 +130,8 @@ func (td *TupleDesc) setTableAlias(alias string) {
 // should consist of the fields of desc2
 // appended onto the fields of desc.
 func (desc *TupleDesc) merge(desc2 *TupleDesc) *TupleDesc {
-	// TODO: some code goes here
-	return &TupleDesc{} //replace me
+	// ... is so that the slice gets added one element at a time rather than the slice as a single element
+	return &TupleDesc{append(desc.Fields, desc2.Fields...)}
 }
 
 // ================== Tuple Methods ======================
@@ -141,7 +167,7 @@ type recordID interface {
 // into the supplied buffer.
 //
 // See the function [binary.Write].  Objects should be serialized in little
-// endian oder.
+// endian order.
 //
 // Strings can be converted to byte arrays by casting to []byte. Note that all
 // strings need to be padded to StringLength bytes (set in types.go). For
@@ -151,8 +177,27 @@ type recordID interface {
 // May return an error if the buffer has insufficient capacity to store the
 // tuple.
 func (t *Tuple) writeTo(b *bytes.Buffer) error {
-	// TODO: some code goes here
-	return fmt.Errorf("writeTo not implemented") //replace me
+	for i := 0; i < len(t.Fields); i++ {
+		tuple_field := t.Fields[i]
+		switch tuple_field := tuple_field.(type) { // Couldn't figure out how to use If statement here since IntField and StringField are special
+		case IntField:
+			err := binary.Write(b, binary.LittleEndian, tuple_field.Value)
+			if err != nil {
+				return err
+			}
+		case StringField:
+			err := binary.Write(b, binary.LittleEndian, []byte(tuple_field.Value))
+			if err != nil {
+				return err
+			}
+			rest := StringLength - len(tuple_field.Value)                  // Gets how many things we need to pad with
+			err = binary.Write(b, binary.LittleEndian, make([]byte, rest)) // Pad
+			if err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // Read the contents of a tuple with the specified [TupleDesc] from the
@@ -169,8 +214,28 @@ func (t *Tuple) writeTo(b *bytes.Buffer) error {
 // May return an error if the buffer has insufficent data to deserialize the
 // tuple.
 func readTupleFrom(b *bytes.Buffer, desc *TupleDesc) (*Tuple, error) {
-	// TODO: some code goes here
-	return nil, fmt.Errorf("readTupleFrom not implemented") //replace me
+	outFields := make([]DBValue, len(desc.Fields))
+	for i := 0; i < len(desc.Fields); i++ {
+		switch desc.Fields[i].Ftype {
+		case IntType:
+			var inInt int64
+			err := binary.Read(b, binary.LittleEndian, &inInt)
+			if err != nil {
+				return nil, err
+			}
+			outFields[i] = IntField{inInt} // add to field
+		case StringType:
+			bin_str := make([]byte, StringLength)
+			err := binary.Read(b, binary.LittleEndian, bin_str)
+			if err != nil {
+				return nil, err
+			}
+			var str = string(bytes.TrimRight(bin_str, "\x00")) // Trim padding
+			outFields[i] = StringField{str}                    // add to field
+		}
+	}
+
+	return &Tuple{*desc, outFields, nil}, nil
 }
 
 // Compare two tuples for equality.  Equality means that the TupleDescs are equal
@@ -178,7 +243,14 @@ func readTupleFrom(b *bytes.Buffer, desc *TupleDesc) (*Tuple, error) {
 // the [TupleDesc.equals] method, but fields can be compared directly with equality
 // operators.
 func (t1 *Tuple) equals(t2 *Tuple) bool {
-	// TODO: some code goes here
+	if !t1.Desc.equals(&t2.Desc) {
+		return false
+	}
+	for i, f := range t1.Fields {
+		if f != t2.Fields[i] {
+			return false
+		}
+	}
 	return true
 }
 
@@ -186,8 +258,15 @@ func (t1 *Tuple) equals(t2 *Tuple) bool {
 // appended to t1. The new tuple should have a correct TupleDesc that is created
 // by merging the descriptions of the two input tuples.
 func joinTuples(t1 *Tuple, t2 *Tuple) *Tuple {
-	// TODO: some code goes here
-	return &Tuple{} //replace me
+	if t1 == nil { // If nil then we don't need to join anything
+		return t2
+	} else if t2 == nil {
+		return t1
+	} else {
+		var desc_temp = t1.Desc.merge(&t2.Desc)
+		var field_temp = append(t1.Fields, t2.Fields...)
+		return &Tuple{*desc_temp, field_temp, nil}
+	}
 }
 
 type orderByState int
@@ -213,8 +292,38 @@ const (
 // Note that EvalExpr uses the [Tuple.project] method, so you will need
 // to implement projection before testing compareField.
 func (t *Tuple) compareField(t2 *Tuple, field Expr) (orderByState, error) {
-	// TODO: some code goes here
-	return OrderedEqual, fmt.Errorf("compareField not implemented") // replace me
+	first_field, err := field.EvalExpr(t)
+	if err != nil {
+		return OrderedEqual, err
+	}
+	second_field, err := field.EvalExpr(t2)
+	if err != nil {
+		return OrderedEqual, err
+	}
+
+	if field.GetExprType().Ftype == IntType {
+		first_val := first_field.(IntField).Value
+		second_val := second_field.(IntField).Value
+		if first_val < second_val { // Can't modularize this I don't think :(
+			return OrderedLessThan, nil
+		} else if first_val == second_val {
+			return OrderedEqual, nil
+		} else {
+			return OrderedGreaterThan, nil
+		}
+	} else if field.GetExprType().Ftype == StringType {
+		first_val := first_field.(StringField).Value
+		second_val := second_field.(StringField).Value
+		if first_val < second_val { // Can't modularize this I don't think :(
+			return OrderedLessThan, nil
+		} else if first_val == second_val {
+			return OrderedEqual, nil
+		} else {
+			return OrderedGreaterThan, nil
+		}
+	}
+	// It doesn't matter what we return in first spot here I think
+	return OrderedEqual, GoDBError{IncompatibleTypesError, "Not IntType or StringType"}
 }
 
 // Project out the supplied fields from the tuple. Should return a new Tuple
@@ -224,8 +333,18 @@ func (t *Tuple) compareField(t2 *Tuple, field Expr) (orderByState, error) {
 // do match on TableQualifier (e.g., a field  t1.name in fields should match an
 // entry t2.name in t, but only if there is not an entry t1.name in t)
 func (t *Tuple) project(fields []FieldType) (*Tuple, error) {
-	// TODO: some code goes here
-	return nil, fmt.Errorf("project not implemented") //replace me
+	values := make([]DBValue, len(fields))
+	idx := 0
+	for _, fType := range fields {
+		proj_ind, err := findFieldInTd(fType, &t.Desc)
+		if err != nil {
+			return nil, err
+		} else {
+			values[idx] = t.Fields[proj_ind]
+			idx += 1
+		}
+	}
+	return &Tuple{TupleDesc{fields}, values, nil}, nil
 }
 
 // Compute a key for the tuple to be used in a map structure

@@ -23,6 +23,10 @@ type HeapFile struct {
 }
 
 // Hint: heap_page and heap_file need function there:  type heapFileRid struct
+type heapFileRid struct {
+	pageNumber int
+	slotNumber int
+}
 
 // Create a HeapFile.
 // Parameters

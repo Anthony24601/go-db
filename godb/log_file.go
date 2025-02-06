@@ -458,7 +458,7 @@ func (f *LogFile) OutputPrettyLog() error {
 			log.Printf("%d RECORD %s (%d) offset=%d\n", pos, record.Type().String(), record.Tid(), record.Offset())
 		} else if record.Type() == UpdateRecord {
 			update := record.(*UpdateLogRecord)
-			log.Printf("%d RECORD %s (%d) offset=%d page=%v\n", pos, record.Type().String(), record.Tid(), record.Offset(), update.Before.(*heapPage).getFile().pageKey(update.Before.(*heapPage).pageNo))
+			log.Printf("%d RECORD %s (%d) offset=%d page=%v\n", pos, record.Type().String(), record.Tid(), record.Offset(), update.Before.(*heapPage).getFile().pageKey(update.Before.(*heapPage).pageNumber))
 		} else {
 			log.Printf("unexpected record: %#v", record)
 		}

@@ -19,7 +19,9 @@ const (
 
 type BufferPool struct {
 	// TODO: some code goes here
-	logFile *LogFile
+	pages    map[any]Page
+	maxPages int
+	logFile  *LogFile
 }
 
 // Create a new BufferPool with the specified number of pages
